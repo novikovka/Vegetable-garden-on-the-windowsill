@@ -4,7 +4,7 @@ from telebot import types
 bot = telebot.TeleBot('7789381064:AAFFdBdqwiNBJrq16UExKKLiprnDpCpRACo')
 #markup = types.InlineKeyboardMarkup()
 
-@bot.message_handler(commands=['start', 'Hello!', 'main'])
+@bot.message_handler(commands=['start', 'Hello!', 'main', 'go'])
 def main(message):
     bot.send_message(message.chat.id, f'Привет, {message.from_user.first_name} {message.from_user.last_name}')
 
