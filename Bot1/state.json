@@ -1,1 +1,32 @@
-{"1166839778": {"light": false, "watering": true}}
+{
+    "1166839778": {
+        "light": false,
+        "watering": false,
+        "actions": {
+            "1": {
+                "type": "watering",
+                "boolean": "on",
+                "hour": 10,
+                "minute": 0
+            },
+            "2": {
+                "type": "light",
+                "boolean": "on",
+                "hour": 12,
+                "minute": 30
+            },
+            "3": {
+                "type": "light",
+                "boolean": "off",
+                "hour": 18,
+                "minute": 45
+            },
+            "4": {
+                "type": "watering",
+                "boolean": "on",
+                "hour": 20,
+                "minute": 30
+            }
+        }
+    }
+}
