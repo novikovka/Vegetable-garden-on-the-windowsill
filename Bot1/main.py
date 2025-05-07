@@ -3,65 +3,35 @@ from telebot import types
 import json
 import os
 from typing import Dict, Any
-from flask import Flask, request, jsonify
-import threading
 import requests
 
-# Конфигурация
 STATE_FILE = "state.json"
-bot = telebot.TeleBot('7789381064:AAFFdBdqwiNBJrq16UExKKLiprnDpCpRACo')  # Чистовик
+TOKEN = '7789381064:AAFFdBdqwiNBJrq16UExKKLiprnDpCpRACo'
+ESP_URL = 'http://192.168.0.109'
+VALID_TOKENS = ["123", "456"]
+authorized_users = {}
+bot = telebot.TeleBot(TOKEN)
 
-# Настройки соединения с ESP8266
-ESP8266_URL = "http://<IP_ESP8266>/control"  # Замените на реальный IP ESP8266
-ESP8266_UPDATE_INTERVAL = 5  # Интервал обновления данных с датчиков (в секундах)
-
-# Инициализация Flask-сервера
-app = Flask(__name__)
-
-# Глобальные переменные для хранения данных с датчиков
-sensor_data = {
+DEFAULT_SENSOR_VALUES = {
     'temperature': 30,
     'humidity': 80,
     'illumination': 50,
     'water_level': 60
 }
 
-# Состояния пользователей
 user_input_steps: Dict[str, Dict] = {}
 user_states: Dict[str, Dict] = {}
 
-authorized_users = {}  # user_id -> True/False
-
-VALID_TOKENS = ["123", "456"]  # список допустимых токенов
-
-@bot.message_handler(commands=['auth'])
-def handle_auth(message):
-    try:
-        token = message.text.split()[1]
-        if token in VALID_TOKENS:
-            authorized_users[message.from_user.id] = True
-            bot.reply_to(message, "✅ Вы успешно авторизованы.")
-        else:
-            bot.reply_to(message, "❌ Неверный токен.")
-    except IndexError:
-        bot.reply_to(message, "⚠️ Используйте: /auth <токен>")
-
-
-
-# Загрузка состояний из файла
 def load_states():
     global user_states
     if os.path.exists(STATE_FILE):
         with open(STATE_FILE, "r") as f:
             user_states = json.load(f)
 
-
 def save_states():
     with open(STATE_FILE, "w") as f:
         json.dump(user_states, f, indent=4)
 
-
-# Инициализация состояния пользователя
 def init_user_state(user_id: str):
     if user_id not in user_states:
         user_states[user_id] = {
@@ -72,67 +42,15 @@ def init_user_state(user_id: str):
         }
         save_states()
 
-
-# Эндпоинт для приема данных от ESP8266
-@app.route('/update_sensors', methods=['POST'])
-def update_sensors():
-    global sensor_data
-    try:
-        data = request.json
-        if not data:
-            return jsonify({"status": "error", "message": "No data provided"}), 400
-
-        # Обновляем только те данные, которые пришли
-        for key in data:
-            if key in sensor_data:
-                sensor_data[key] = data[key]
-
-        return jsonify({"status": "success"})
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
-
-
-# Функция для отправки команд на ESP8266
-def send_command_to_esp(command: str, value: Any) -> bool:
-    try:
-        payload = {command: value}
-        response = requests.post(ESP8266_URL, json=payload, timeout=3)
-        if response.status_code == 200:
-            return True
-        else:
-            print(f"Ошибка отправки команды: {response.status_code}")
-            return False
-    except requests.exceptions.RequestException as e:
-        print(f"Ошибка соединения с ESP8266: {e}")
-        return False
-
-'''
-# Обработчики команд Telegram
 @bot.message_handler(commands=["settings", "sensors", "notifications"])
 def handle_commands(message):
     user_id = str(message.chat.id)
-
     init_user_state(user_id)
 
-    command = message.text[1:]
-    if command == "settings":
-        send_settings(message)
-    elif command == "sensors":
-        send_controls(message)
-    elif command == "notifications":
-        send_notifications(message)
-
-'''
-@bot.message_handler(commands=["settings", "sensors", "notifications"])
-def handle_commands(message):
-    user_id = message.from_user.id
-    if not authorized_users.get(user_id):
-        bot.reply_to(message, '❌ Вы не авторизованы. Введите Ваш уникальный токен в формате "/auth <токен>". Например "/auth token123"')
+    if message.from_user.id not in authorized_users:
+        bot.reply_to(message, "❌ Вы не авторизованы. Используйте /auth <токен>")
         return
 
-    uid_str = str(user_id)
-    init_user_state(uid_str)
-
     command = message.text[1:]
     if command == "settings":
         send_settings(message)
@@ -141,65 +59,73 @@ def handle_commands(message):
     elif command == "notifications":
         send_notifications(message)
 
+@bot.message_handler(commands=['auth'])
+def handle_auth(message):
+    try:
+        token = message.text.split()[1]
+        if token in VALID_TOKENS:
+            authorized_users[message.from_user.id] = True
+            bot.reply_to(message, "✅ Авторизация успешна.")
+        else:
+            bot.reply_to(message, "❌ Неверный токен.")
+    except IndexError:
+        bot.reply_to(message, "⚠️ Используйте: /auth <токен>")
 
-# Обработчик callback-запросов
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callback(call):
-    user_id = call.from_user.id
-    if not authorized_users.get(user_id):
-        bot.answer_callback_query(call.id, "❌ Вы не авторизованы. Введите /auth <токен>.")
-        return
-
     user_id = str(call.message.chat.id)
     init_user_state(user_id)
-
 
     call_handlers = {
         'settings': lambda: send_settings(call.message),
         'sensors': lambda: send_controls(call.message),
         'notifications': lambda: send_notifications(call.message),
-        'light_on': lambda: toggle_light(user_id, True, call),
-        'light_off': lambda: toggle_light(user_id, False, call),
-        'watering_on': lambda: toggle_watering(user_id, True, call),
-        'watering_off': lambda: toggle_watering(user_id, False, call),
+        'light_on': lambda: handle_device_switch(user_id, call, 1, True, 'light'),
+        'light_off': lambda: handle_device_switch(user_id, call, 1, False, 'light'),
+        'watering_on': lambda: handle_device_switch(user_id, call, 2, True, 'watering'),
+        'watering_off': lambda: handle_device_switch(user_id, call, 2, False, 'watering'),
         'custom_button_1': lambda: start_input_sequence(user_id, 1, call.message, "Введите час (целое число):"),
         'custom_button_2': lambda: start_input_sequence(user_id, 3, call.message, "Введите час (целое число):"),
         'custom_button_3': lambda: start_input_sequence(user_id, 5, call.message, "Введите час (целое число):"),
         'custom_button_4': lambda: start_input_sequence(user_id, 7, call.message, "Введите номер действия:"),
         'custom_1': lambda: add_notifications_buttons(call.message),
         'custom_2': lambda: start_input_sequence(user_id, 30, call.message, "Введите номер триггера:"),
-        'custom_11': lambda: start_input_sequence(user_id, 8, call.message,
-                                                  "Введите значение параметра 'влажность' при котором Вы хотите получать уведомление:"),
-        'custom_12': lambda: start_input_sequence(user_id, 9, call.message,
-                                                  "Введите значение параметра 'температура' при котором Вы хотите получать уведомление:"),
-        'custom_13': lambda: start_input_sequence(user_id, 10, call.message,
-                                                  "Введите значение параметра 'освещенность' при котором Вы хотите получать уведомление:"),
-        'custom_14': lambda: start_input_sequence(user_id, 11, call.message,
-                                                  "Введите значение параметра 'уровень воды' при котором Вы хотите получать уведомление:")
+        'custom_11': lambda: start_input_sequence(user_id, 8, call.message, "Введите значение параметра 'влажность' при котором Вы хотите получать уведомление:"),
+        'custom_12': lambda: start_input_sequence(user_id, 9, call.message, "Введите значение параметра 'температура' при котором Вы хотите получать уведомление:"),
+        'custom_13': lambda: start_input_sequence(user_id, 10, call.message, "Введите значение параметра 'освещенность' при котором Вы хотите получать уведомление:"),
+        'custom_14': lambda: start_input_sequence(user_id, 11, call.message, "Введите значение параметра 'уровень воды' при котором Вы хотите получать уведомление:")
     }
 
     if call.data in call_handlers:
         call_handlers[call.data]()
         save_states()
 
+def handle_device_switch(user_id: str, call, relay_num: int, state: bool, state_key: str):
+    user_states[user_id][state_key] = state
+    flag = "on" if state else "off"
+    try:
+        requests.get(f"{ESP_URL}/relay?num={relay_num}&state={flag}", timeout=3)
+        emoji = "💦" if state_key == "watering" and state else "🚱"
+        if state_key == "light":
+            emoji = "💡" if state else "🌑"
+        bot.answer_callback_query(call.id, f"{state_key.capitalize()} {'включен' if state else 'выключен'} {emoji}")
+    except Exception as e:
+        bot.answer_callback_query(call.id, f"Ошибка подключения к ESP: {e}")
+
+    update_controls_inline_keyboard(call)
+
 
 def toggle_light(user_id: str, state: bool, call):
     user_states[user_id]["light"] = state
     emoji = "💡" if state else "🌑"
-    if send_command_to_esp("light", int(state)):
-        bot.answer_callback_query(call.id, f"Свет {'включен' if state else 'выключен'} {emoji}")
-    else:
-        bot.answer_callback_query(call.id, "⚠️ Ошибка отправки команды на устройство")
+    bot.answer_callback_query(call.id, f"Свет {'включен' if state else 'выключен'} {emoji}")
     update_controls_inline_keyboard(call)
 
 
 def toggle_watering(user_id: str, state: bool, call):
     user_states[user_id]["watering"] = state
     emoji = "💦" if state else "🚱"
-    if send_command_to_esp("watering", int(state)):
-        bot.answer_callback_query(call.id, f"Полив {'включен' if state else 'выключен'} {emoji}")
-    else:
-        bot.answer_callback_query(call.id, "⚠️ Ошибка отправки команды на устройство")
+    bot.answer_callback_query(call.id, f"Полив {'включен' if state else 'выключен'} {emoji}")
     update_controls_inline_keyboard(call)
 
 
@@ -262,6 +188,30 @@ def handle_user_input(message):
     except ValueError as e:
         bot.send_message(message.chat.id, str(e))
 
+
+# ========== Работа с ESP ==========
+
+# Функция для получения данных с датчиков с ESP8266
+def fetch_sensor_data():
+    try:
+        resp = requests.get(f"{ESP_URL}/update_sensors", timeout=3)
+        if resp.status_code == 200:
+            return resp.json()  # Возвращает словарь с данными
+        else:
+            return {"error": "ESP вернул ошибку"}
+    except Exception as e:
+        return {"error": f"Ошибка подключения: {e}"}
+
+# Функция для кратковременного включения реле (включить и сразу выключить)
+def control_relay(num):
+    try:
+        requests.get(f"{ESP_URL}/relay?num={num}&state=on", timeout=3)
+        #requests.get(f"{ESP_URL}/relay?num={num}&state=off", timeout=3)
+        return True
+    except:
+        return False
+
+# ========== Работа с ESP ==========
 
 def validate_number(text: str, min_val: int, max_val: int) -> int:
     num = int(text)
@@ -368,14 +318,30 @@ def send_settings(message):
 def send_controls(message):
     user_id = str(message.chat.id)
     state = user_states.get(user_id, {"light": False, "watering": False})
+    text = ""
 
-    sensor_text = (
-        "*Текущие показания датчиков:*\n\n"
-        f"🌡️ Температура: *{sensor_data['temperature']}°C*\n\n"
-        f"💧 Влажность: *{sensor_data['humidity']}%*\n\n"
-        f"💡 Освещение: *{sensor_data['illumination']} лк*\n\n"
-        f"🚰 Уровень воды: *{sensor_data['water_level']}%*"
-    )
+    data = fetch_sensor_data()
+    if "error" in data:
+        '''
+        text = (
+            "*Текущие показания датчиков:*\n\n"
+            f"🌡 Температура: 20°C\n"
+            f"💧 Влажность воздуха: 80 %\n"
+            f"🌱 Влажность почвы: 90 %\n"
+            f"🚰 Вода в резервуаре: 15 %"
+        )
+        '''
+        bot.reply_to(message, f"❌ {data['error']}")
+
+    else:
+        text = (
+            "*Текущие показания датчиков:*\n\n"
+            f"🌡 Температура: {data.get('temperature', '?')}°C\n"
+            f"💧 Влажность воздуха: {data.get('humidity', '?')}%\n"
+            f"🌱 Влажность почвы: {data.get('soil_moisture', '?')}%\n"
+            f"🚰 Вода в резервуаре: {data.get('soil', '?')}%"
+        )
+        #bot.send_message(message.chat.id, text)
 
     markup = types.InlineKeyboardMarkup(row_width=1)
     markup.add(
@@ -389,8 +355,7 @@ def send_controls(message):
         )
     )
 
-    bot.send_message(message.chat.id, sensor_text, parse_mode='Markdown', reply_markup=markup)
-
+    bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=markup)
 
 def update_controls_inline_keyboard(call):
     user_id = str(call.message.chat.id)
@@ -414,19 +379,8 @@ def update_controls_inline_keyboard(call):
         reply_markup=markup
     )
 
-
-def run_flask():
-    app.run(host='0.0.0.0', port=5000)
-
-
 # Запуск бота
 if __name__ == "__main__":
     load_states()
-
-    # Запускаем Flask-сервер в отдельном потоке
-    flask_thread = threading.Thread(target=run_flask)
-    flask_thread.daemon = True
-    flask_thread.start()
-
-    # Запускаем Telegram-бота
     bot.polling(none_stop=True)
+
