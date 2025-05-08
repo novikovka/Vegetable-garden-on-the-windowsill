@@ -5,6 +5,7 @@ import os
 from typing import Dict, Any
 import requests
 import threading
+from datetime import datetime
 
 STATE_FILE = "state.json"
 TOKEN = '7789381064:AAFFdBdqwiNBJrq16UExKKLiprnDpCpRACo'
@@ -13,12 +14,45 @@ VALID_TOKENS = ["123", "456"]
 authorized_users = {}
 bot = telebot.TeleBot(TOKEN)
 
+# ========== Работа с ESP ==========
+
+# Функция для получения данных с датчиков с ESP8266
+def fetch_sensor_data():
+    try:
+        resp = requests.get(f"{ESP_URL}/update_sensors", timeout=3)
+        if resp.status_code == 200:
+            return resp.json()  # Возвращает словарь с данными
+        else:
+            return {"error": "ESP вернул ошибку"}
+    except Exception as e:
+        return {"error": f"Ошибка подключения: {e}"}
+
+# Функция для кратковременного включения реле (включить и сразу выключить)
+def control_relay(num):
+    try:
+        requests.get(f"{ESP_URL}/relay?num={num}&state=on", timeout=3)
+        #requests.get(f"{ESP_URL}/relay?num={num}&state=off", timeout=3)
+        return True
+    except:
+        return False
+
+# ========== Работа с ESP ==========
+
+
 TEMPER = 88  # Примерная температура, её вы можете менять по ходу
-TEMPER_2 = 30
+TEMPER_2 = 20
 TEMPER_3 = 90
 
+
+# Инициализация
+global_state = {}
+sent_notifications = set()
+executed_time_actions = set()
+
+'''
 global_state = {}
 sent_notifications = set()  # Храним пары (user_id, trigger_value)
+'''
 
 DEFAULT_SENSOR_VALUES = {
     'temperature': 30,
@@ -58,115 +92,92 @@ def load_state():
         print(f"Ошибка чтения state.json: {e}")
         return {}
 
-'''
+
+
+# Проверка триггеров температуры, влажности и влажности почвы
 def check_temperature_triggers():
-    global global_state, TEMPER, sent_notifications
+    global global_state, TEMPER, sent_notifications, TEMPER_2, TEMPER_3
 
     new_state = load_state()
-    data = fetch_sensor_data()
 
     for user_id, settings in new_state.items():
+        print(sent_notifications)
         notifications = settings.get("notifications", {})
         for _, notif in notifications.items():
-            if notif.get("type") == "temperature":
-                trigger = notif.get("trigger")
-                key = (user_id, trigger)
-                if data.get('temperature', '?') == trigger and key not in sent_notifications:
-                    try:
-                        bot.send_message(user_id, f"🌡 Температура достигла значения {data.get('temperature', '?')}°C")
-                        sent_notifications.add(key)  # Отметили как отправленное
-                    except Exception as e:
-                        print(f"Не удалось отправить сообщение пользователю {user_id}: {e}")
-                elif data.get('temperature', '?') != trigger and key in sent_notifications:
-                    sent_notifications.remove(
-                        key)  # Если температура ушла от триггера — можно снова уведомлять в будущем
-            elif notif.get("type") == "humidity":
-                trigger = notif.get("trigger")
-                key = (user_id, trigger)
-                if data.get('humidity', '?') == trigger and key not in sent_notifications:
-                    try:
-                        bot.send_message(user_id, f"🌡 Влажность воздуха достигла значения {data.get('humidity', '?')}°C")
-                        sent_notifications.add(key)  # Отметили как отправленное
-                    except Exception as e:
-                        print(f"Не удалось отправить сообщение пользователю {user_id}: {e}")
-                elif data.get('humidity', '?') != trigger and key in sent_notifications:
-                    sent_notifications.remove(
-                        key)  # Если температура ушла от триггера — можно снова уведомлять в будущем
-            elif notif.get("type") == "soil_moisture":
-                trigger = notif.get("trigger")
-                key = (user_id, trigger)
-                if data.get('soil_moisture', '?') == trigger and key not in sent_notifications:
-                    try:
-                        bot.send_message(user_id, f"🌡 Влажность почвы достигла значения {data.get('soil_moisture', '?')}°C")
-                        sent_notifications.add(key)  # Отметили как отправленное
-                    except Exception as e:
-                        print(f"Не удалось отправить сообщение пользователю {user_id}: {e}")
-                elif data.get('soil_moisture', '?') != trigger and key in sent_notifications:
-                    sent_notifications.remove(
-                        key)  # Если температура ушла от триггера — можно снова уведомлять в будущем
+            notif_type = notif.get("type")
+            trigger = notif.get("trigger")
+            key = (user_id, notif_type, trigger)
 
-    global_state = new_state
-
-    # Повторить через 60 секунд
-    threading.Timer(60, check_temperature_triggers).start()
-'''
-
-def check_temperature_triggers(): #для тестирования
-    global global_state, TEMPER, sent_notifications
-
-    new_state = load_state()
-    # data = fetch_sensor_data()
-
-    for user_id, settings in new_state.items():
-        notifications = settings.get("notifications", {})
-        for _, notif in notifications.items():
-            if notif.get("type") == "temperature":
-                trigger = notif.get("trigger")
-                key = (user_id, trigger)
+            if notif_type == "temperature":
                 if TEMPER == trigger and key not in sent_notifications:
                     try:
                         bot.send_message(user_id, f"🌡 Температура достигла значения {TEMPER}°C")
-                        sent_notifications.add(key)  # Отметили как отправленное
+                        sent_notifications.add(key)
                     except Exception as e:
                         print(f"Не удалось отправить сообщение пользователю {user_id}: {e}")
                 elif TEMPER != trigger and key in sent_notifications:
-                    sent_notifications.remove(
-                        key)  # Если температура ушла от триггера — можно снова уведомлять в будущем
-            elif notif.get("type") == "humidity":
-                trigger = notif.get("trigger")
-                key = (user_id, trigger)
+                    sent_notifications.remove(key)
+
+            elif notif_type == "humidity":
                 if TEMPER_2 == trigger and key not in sent_notifications:
                     try:
-                        bot.send_message(user_id, f"🌡 Влажность воздуха достигла значения {TEMPER_2}°C")
-                        sent_notifications.add(key)  # Отметили как отправленное
+                        bot.send_message(user_id, f"💧 Влажность воздуха достигла значения {TEMPER_2}%")
+                        sent_notifications.add(key)
                     except Exception as e:
                         print(f"Не удалось отправить сообщение пользователю {user_id}: {e}")
                 elif TEMPER_2 != trigger and key in sent_notifications:
-                    sent_notifications.remove(
-                        key)  # Если температура ушла от триггера — можно снова уведомлять в будущем
-            elif notif.get("type") == "soil_moisture":
-                trigger = notif.get("trigger")
-                key = (user_id, trigger)
+                    sent_notifications.remove(key)
+
+            elif notif_type == "soil_moisture":
                 if TEMPER_3 == trigger and key not in sent_notifications:
                     try:
-                        bot.send_message(user_id, f"🌡 Влажность почвы достигла значения {TEMPER_3}°C")
-                        sent_notifications.add(key)  # Отметили как отправленное
+                        bot.send_message(user_id, f"🌱 Влажность почвы достигла значения {TEMPER_3}%")
+                        sent_notifications.add(key)
                     except Exception as e:
                         print(f"Не удалось отправить сообщение пользователю {user_id}: {e}")
                 elif TEMPER_3 != trigger and key in sent_notifications:
-                    sent_notifications.remove(
-                        key)  # Если температура ушла от триггера — можно снова уведомлять в будущем
+                    sent_notifications.remove(key)
 
     global_state = new_state
-
-    # Повторить через 60 секунд
     threading.Timer(60, check_temperature_triggers).start()
 
-# Инициализация
-global_state = load_state()
-print(global_state)
-check_temperature_triggers()
+# 🔔 Проверка запланированных действий по времени (из блока actions)
+def check_scheduled_actions():
+    global executed_time_actions
 
+    state = load_state()
+    now = datetime.now()
+    current_hour = now.hour
+    current_minute = now.minute
+
+    for user_id, user_data in state.items():
+        actions = user_data.get("actions", {})
+        for action_id, action in actions.items():
+            hour = action.get("hour")
+            minute = action.get("minute")
+            action_type = action.get("type")
+            boolean_value = action.get("boolean")
+
+            key = (user_id, action_id, hour, minute)
+
+            if hour == current_hour and minute == current_minute:
+                if key not in executed_time_actions:
+                    try:
+                        bot.send_message(user_id, f"⏰ Время выполнить действие: {action_type} → {boolean_value.upper()}")
+                        # Здесь можно добавить вызов управления устройством, если нужно
+                        executed_time_actions.add(key)
+                    except Exception as e:
+                        print(f"Ошибка при отправке действия {action_type} пользователю {user_id}: {e}")
+            else:
+                if key in executed_time_actions:
+                    executed_time_actions.remove(key)
+
+    threading.Timer(60, check_scheduled_actions).start()
+
+# Старт функций
+global_state = load_state()
+check_temperature_triggers()
+check_scheduled_actions()
 
 @bot.message_handler(commands=["settings", "sensors", "notifications"])
 def handle_commands(message):
@@ -293,7 +304,6 @@ def handle_user_input(message):
                 8: "temperature",
                 9: "humidity",
                 10: "soil_moisture"
-                #11: "water_level"
             }
             add_notification(user_id, trigger_types[step], trigger, message)
 
@@ -315,29 +325,7 @@ def handle_user_input(message):
         bot.send_message(message.chat.id, str(e))
 
 
-# ========== Работа с ESP ==========
 
-# Функция для получения данных с датчиков с ESP8266
-def fetch_sensor_data():
-    try:
-        resp = requests.get(f"{ESP_URL}/update_sensors", timeout=3)
-        if resp.status_code == 200:
-            return resp.json()  # Возвращает словарь с данными
-        else:
-            return {"error": "ESP вернул ошибку"}
-    except Exception as e:
-        return {"error": f"Ошибка подключения: {e}"}
-
-# Функция для кратковременного включения реле (включить и сразу выключить)
-def control_relay(num):
-    try:
-        requests.get(f"{ESP_URL}/relay?num={num}&state=on", timeout=3)
-        #requests.get(f"{ESP_URL}/relay?num={num}&state=off", timeout=3)
-        return True
-    except:
-        return False
-
-# ========== Работа с ESP ==========
 
 def validate_number(text: str, min_val: int, max_val: int) -> int:
     num = int(text)
@@ -447,13 +435,11 @@ def send_controls(message):
 
     data = fetch_sensor_data()
     if "error" in data:
-
         text = (
             "*Текущие показания датчиков:*\n\n"
             f"🌡 Температура: 20°C\n"
             f"💧 Влажность воздуха: 80 %\n"
             f"🌱 Влажность почвы: 90 %\n"
-            f"🚰 Вода в резервуаре: 15 %"
         )
 
         #bot.reply_to(message, f"❌ {data['error']}")
@@ -464,7 +450,6 @@ def send_controls(message):
             f"🌡 Температура: {data.get('temperature', '?')}°C\n"
             f"💧 Влажность воздуха: {data.get('humidity', '?')}%\n"
             f"🌱 Влажность почвы: {data.get('soil_moisture', '?')}%\n"
-            f"🚰 Вода в резервуаре: {data.get('soil', '?')}%"
         )
         #bot.send_message(message.chat.id, text)
 
@@ -509,4 +494,3 @@ if __name__ == "__main__":
     load_states()
     print(user_states)
     bot.polling(none_stop=True)
-
