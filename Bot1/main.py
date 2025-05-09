@@ -14,8 +14,6 @@ VALID_TOKENS = ["123", "456"]
 authorized_users = {}
 bot = telebot.TeleBot(TOKEN)
 
-# ========== Работа с ESP ==========
-
 # Функция для получения данных с датчиков с ESP8266
 def fetch_sensor_data():
     try:
@@ -27,33 +25,20 @@ def fetch_sensor_data():
     except Exception as e:
         return {"error": f"Ошибка подключения: {e}"}
 
-# Функция для кратковременного включения реле (включить и сразу выключить)
+
+# Функция для включения реле 
 def control_relay(num):
     try:
         requests.get(f"{ESP_URL}/relay?num={num}&state=on", timeout=3)
-        #requests.get(f"{ESP_URL}/relay?num={num}&state=off", timeout=3)
         return True
     except:
         return False
 
-# ========== Работа с ESP ==========
-
-
-TEMPER = 88  # Примерная температура, её вы можете менять по ходу
-TEMPER_2 = 20
-TEMPER_3 = 90
 
 # Инициализация
 global_state = {}
 sent_notifications = set()
 executed_time_actions = set()
-
-DEFAULT_SENSOR_VALUES = {
-    'temperature': 30,
-    'humidity': 80,
-    'illumination': 50,
-    'water_level': 60
-}
 
 user_input_steps: Dict[str, Dict] = {}
 user_states: Dict[str, Dict] = {}
@@ -86,9 +71,10 @@ def load_state():
         print(f"Ошибка чтения state.json: {e}")
         return {}
 
-# Проверка триггеров температуры, влажности и влажности почвы
+
+# Проверка триггеров температуры, влажности и влажности почвы и отправка уведомлений
 def check_temperature_triggers():
-    global global_state, TEMPER, sent_notifications, TEMPER_2, TEMPER_3
+    global global_state, sent_notifications
 
     new_state = load_state()
     data = fetch_sensor_data()
@@ -104,7 +90,7 @@ def check_temperature_triggers():
             if notif_type == "temperature":
                 if int(data.get('temperature', '?')) == trigger and key not in sent_notifications:
                     try:
-                        bot.send_message(user_id, f"🌡 Температура достигла значения {TEMPER}°C")
+                        bot.send_message(user_id, f"🌡 Температура достигла значения {data.get('temperature', '?')}°C")
                         sent_notifications.add(key)
                     except Exception as e:
                         print(f"Не удалось отправить сообщение пользователю {user_id}: {e}")
@@ -114,7 +100,7 @@ def check_temperature_triggers():
             elif notif_type == "humidity":
                 if int(data.get('humidity', '?')) == trigger and key not in sent_notifications:
                     try:
-                        bot.send_message(user_id, f"💧 Влажность воздуха достигла значения {TEMPER_2}%")
+                        bot.send_message(user_id, f"💧 Влажность воздуха достигла значения {data.get('humidity', '?')}%")
                         sent_notifications.add(key)
                     except Exception as e:
                         print(f"Не удалось отправить сообщение пользователю {user_id}: {e}")
@@ -124,7 +110,8 @@ def check_temperature_triggers():
             elif notif_type == "soil_moisture":
                 if int(data.get('soil_moisture', '?')) == trigger and key not in sent_notifications:
                     try:
-                        bot.send_message(user_id, f"🌱 Влажность почвы достигла значения {TEMPER_3}%")
+                        bot.send_message(user_id,
+                                         f"🌱 Влажность почвы достигла значения {data.get('soil_moisture', '?')}%")
                         sent_notifications.add(key)
                     except Exception as e:
                         print(f"Не удалось отправить сообщение пользователю {user_id}: {e}")
@@ -134,7 +121,8 @@ def check_temperature_triggers():
     global_state = new_state
     threading.Timer(60, check_temperature_triggers).start()
 
-# 🔔 Проверка запланированных действий по времени (из блока actions)
+
+#Проверка запланированных действий по времени
 def check_scheduled_actions():
     global executed_time_actions
 
@@ -143,8 +131,6 @@ def check_scheduled_actions():
     current_hour = now.hour
     current_minute = now.minute
 
-    #'light_on': lambda: handle_device_switch(user_id, call, 1, True, 'light'),
-
     for user_id, user_data in state.items():
         actions = user_data.get("actions", {})
         for action_id, action in actions.items():
@@ -152,7 +138,6 @@ def check_scheduled_actions():
             minute = action.get("minute")
             action_type = action.get("type")
             boolean_value = action.get("boolean")
-
             key = (user_id, action_id, hour, minute)
 
             if hour == current_hour and minute == current_minute:
@@ -167,8 +152,6 @@ def check_scheduled_actions():
                         elif action_type == "light" and boolean_value == "off":
                             handle_device_switch(user_id, None, 1, False, 'light')
 
-                        #bot.send_message(user_id, f"⏰ Время выполнить действие: {action_type} → {boolean_value.upper()}")
-
                         executed_time_actions.add(key)
                     except Exception as e:
                         print(f"Ошибка при отправке действия {action_type} пользователю {user_id}: {e}")
@@ -177,6 +160,7 @@ def check_scheduled_actions():
                     executed_time_actions.remove(key)
 
     threading.Timer(60, check_scheduled_actions).start()
+
 
 # Старт функций
 global_state = load_state()
@@ -200,6 +184,7 @@ def handle_commands(message):
     elif command == "notifications":
         send_notifications(message)
 
+
 @bot.message_handler(commands=['auth'])
 def handle_auth(message):
     try:
@@ -211,6 +196,7 @@ def handle_auth(message):
             bot.reply_to(message, "❌ Неверный токен.")
     except IndexError:
         bot.reply_to(message, "⚠️ Используйте: /auth <токен>")
+
 
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callback(call):
@@ -231,49 +217,30 @@ def handle_callback(call):
         'custom_button_4': lambda: start_input_sequence(user_id, 7, call.message, "Введите номер действия:"),
         'custom_1': lambda: add_notifications_buttons(call.message),
         'custom_2': lambda: start_input_sequence(user_id, 30, call.message, "Введите номер триггера:"),
-        'custom_11': lambda: start_input_sequence(user_id, 8, call.message, "Введите значение параметра 'температура' при котором Вы хотите получать уведомление:"),
-        'custom_12': lambda: start_input_sequence(user_id, 9, call.message, "Введите значение параметра 'влажность воздуха' при котором Вы хотите получать уведомление:"),
-        'custom_13': lambda: start_input_sequence(user_id, 10, call.message, "Введите значение параметра 'влажность почвы' при котором Вы хотите получать уведомление:")
-        #'custom_14': lambda: start_input_sequence(user_id, 11, call.message, "Введите значение параметра 'уровень воды' при котором Вы хотите получать уведомление:")
+        'custom_11': lambda: start_input_sequence(user_id, 8, call.message,
+                                                  "Введите значение параметра 'температура' при котором Вы хотите получать уведомление:"),
+        'custom_12': lambda: start_input_sequence(user_id, 9, call.message,
+                                                  "Введите значение параметра 'влажность воздуха' при котором Вы хотите получать уведомление:"),
+        'custom_13': lambda: start_input_sequence(user_id, 10, call.message,
+                                                  "Введите значение параметра 'влажность почвы' при котором Вы хотите получать уведомление:")
     }
 
     if call.data in call_handlers:
         call_handlers[call.data]()
         save_states()
 
-'''
+
 def handle_device_switch(user_id: str, call, relay_num: int, state: bool, state_key: str):
     user_states[user_id][state_key] = state
-    flag = "on" if state else "off"
-    try:
-        requests.get(f"{ESP_URL}/relay?num={relay_num}&state={flag}", timeout=3)
-        emoji = "💦" if state_key == "watering" and state else "🚱"
-        if state_key == "light":
-            emoji = "💡" if state else "🌑"
-        bot.answer_callback_query(call.id, f"{state_key.capitalize()} {'включен' if state else 'выключен'} {emoji}")
-    except Exception as e:
-        bot.answer_callback_query(call.id, f"Ошибка подключения к ESP: {e}")
-
-    update_controls_inline_keyboard(call)
- 
-'''
-def handle_device_switch(user_id: str, call, relay_num: int, state: bool, state_key: str):
-    # Обновляем состояние пользователя
-    user_states[user_id][state_key] = state
-
-    # Формируем флаг состояния для запроса
-    flag = "on" if state else "off"
+    flag = "on" if state else "off" # Формируем флаг состояния для запроса
 
     try:
         # Отправляем запрос к ESP-устройству
         requests.get(f"{ESP_URL}/relay?num={relay_num}&state={flag}", timeout=3)
-
-        # Определяем emoji по типу устройства
         emoji = "💦" if state_key == "watering" and state else "🚱"
         if state_key == "light":
             emoji = "💡" if state else "🌑"
 
-        # Отправляем ответ пользователю, если есть call (т.е. это было нажатие кнопки)
         if call:
             bot.answer_callback_query(call.id, f"{state_key.capitalize()} {'включен' if state else 'выключен'} {emoji}")
 
@@ -382,6 +349,7 @@ def add_action(user_id: str, action_type: str, action_state: str, hour: int, min
     bot.send_message(message.chat.id, f"Сохранено как действие #{next_id}.")
     user_input_steps.pop(user_id)
 
+
 def add_notification(user_id: str, note_type: str, trigger: int, message):
     notifications = user_states[user_id].setdefault("notifications", {})
     next_id = str(max([int(k) for k in notifications.keys()] + [0]) + 1)
@@ -426,11 +394,8 @@ def add_notifications_buttons(message):
         types.InlineKeyboardButton("Влажность воздуха", callback_data="custom_12"),
         types.InlineKeyboardButton("Влажность почвы", callback_data="custom_13"),
         types.InlineKeyboardButton("Температура", callback_data="custom_11")
-        #types.InlineKeyboardButton("Уровень воды", callback_data="custom_14")
     )
-
     bot.send_message(message.chat.id, "Выберите параметр для триггера:", reply_markup=markup)
-
 
 def send_settings(message):
     user_id = str(message.chat.id)
@@ -465,17 +430,7 @@ def send_controls(message):
 
     data = fetch_sensor_data()
     if "error" in data:
-
-        '''
-        text = (
-            "*Текущие показания датчиков:*\n\n"
-            f"🌡 Температура: 20°C\n"
-            f"💧 Влажность воздуха: 80 %\n"
-            f"🌱 Влажность почвы: 90 %\n"
-        )
-        '''
         bot.reply_to(message, f"❌ {data['error']}")
-
     else:
         text = (
             "*Текущие показания датчиков:*\n\n"
@@ -483,7 +438,6 @@ def send_controls(message):
             f"💧 Влажность воздуха: {data.get('humidity', '?')}%\n"
             f"🌱 Влажность почвы: {data.get('soil_moisture', '?')}%\n"
         )
-        #bot.send_message(message.chat.id, text)
 
     markup = types.InlineKeyboardMarkup(row_width=1)
     markup.add(
@@ -498,6 +452,7 @@ def send_controls(message):
     )
 
     bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=markup)
+
 
 def update_controls_inline_keyboard(call):
     user_id = str(call.message.chat.id)
