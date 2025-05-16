@@ -9,10 +9,11 @@ from datetime import datetime
 
 STATE_FILE = "state.json"
 TOKEN = '7789381064:AAFFdBdqwiNBJrq16UExKKLiprnDpCpRACo'
-ESP_URL = 'http://192.168.0.109'
+ESP_URL = 'http://192.168.0.106'
 VALID_TOKENS = ["123", "456"]
 authorized_users = {}
 bot = telebot.TeleBot(TOKEN)
+
 
 # Функция для получения данных с датчиков с ESP8266
 def fetch_sensor_data():
@@ -24,15 +25,6 @@ def fetch_sensor_data():
             return {"error": "ESP вернул ошибку"}
     except Exception as e:
         return {"error": f"Ошибка подключения: {e}"}
-
-
-# Функция для включения реле 
-def control_relay(num):
-    try:
-        requests.get(f"{ESP_URL}/relay?num={num}&state=on", timeout=3)
-        return True
-    except:
-        return False
 
 
 # Инициализация
@@ -122,7 +114,7 @@ def check_temperature_triggers():
     threading.Timer(60, check_temperature_triggers).start()
 
 
-#Проверка запланированных действий по времени
+#Проверка запланированных действий по времени (из блока actions)
 def check_scheduled_actions():
     global executed_time_actions
 
@@ -229,10 +221,9 @@ def handle_callback(call):
         call_handlers[call.data]()
         save_states()
 
-
 def handle_device_switch(user_id: str, call, relay_num: int, state: bool, state_key: str):
     user_states[user_id][state_key] = state
-    flag = "on" if state else "off" # Формируем флаг состояния для запроса
+    flag = "on" if state else "off"  # Формируем флаг состояния для запроса
 
     try:
         # Отправляем запрос к ESP-устройству
@@ -243,17 +234,29 @@ def handle_device_switch(user_id: str, call, relay_num: int, state: bool, state_
 
         if call:
             bot.answer_callback_query(call.id, f"{state_key.capitalize()} {'включен' if state else 'выключен'} {emoji}")
-
     except Exception as e:
-        # Ошибка подключения — ответ пользователю, если был call
         if call:
             bot.answer_callback_query(call.id, f"Ошибка подключения к ESP: {e}")
         else:
             print(f"Ошибка подключения к ESP для пользователя {user_id}: {e}")
 
-    # Обновление интерфейса, если это вызов от кнопки
-    if call:
-        update_controls_inline_keyboard(call)
+    # 🔁 Автоматическое отключение полива через 60 секунд
+    if state_key == "watering" and state:
+        def auto_turn_off():
+            user_states[user_id][state_key] = False
+            try:
+                requests.get(f"{ESP_URL}/relay?num={relay_num}&state=off", timeout=3)
+                bot.send_message(user_id, "🚱 Полив автоматически отключён через 1 минуту.")
+                save_states()
+                update_controls_inline_keyboard(call)
+            except Exception as e:
+                print(f"Ошибка при автоотключении полива: {e}")
+            save_states()
+
+        threading.Timer(10, auto_turn_off).start()
+
+    save_states()
+    update_controls_inline_keyboard(call)
 
 
 def toggle_light(user_id: str, state: bool, call):
@@ -479,5 +482,5 @@ def update_controls_inline_keyboard(call):
 # Запуск бота
 if __name__ == "__main__":
     load_states()
-    print(user_states)
+    #print(user_states)
     bot.polling(none_stop=True)

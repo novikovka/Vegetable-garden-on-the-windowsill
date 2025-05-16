@@ -3,8 +3,8 @@
 #include <DHT.h>
 
 // ========== Настройки WiFi ==========
-const char* ssid = "ufanet6";
-const char* password = "65154200";
+const char* ssid = "TP-Link_194B";
+const char* password = "46488862";
 
 // ========== Пины ==========
 #define DHTPIN D2
@@ -25,6 +25,8 @@ int soilMoisture = 0;
 void setupWiFi() {
   Serial.begin(115200);
   WiFi.begin(ssid, password);
+  //WiFi.begin(ssid);
+  
   Serial.println("Подключение к WiFi...");
 
   while (WiFi.status() != WL_CONNECTED) {
@@ -40,8 +42,11 @@ void setupWiFi() {
 void readSensors() {
   humidity = dht.readHumidity();
   temperature = dht.readTemperature();
-  soilMoisture = analogRead(SOIL_PIN);  // 0 (влажно) – 1023 (сухо)
-
+  
+  int rawValue = analogRead(SOIL_PIN); // 0 (влажно) – 1023 (сухо)
+  soilMoisture = map(rawValue, 1023, 0, 0, 100);  // 0% = сухо, 100% = влажно
+  soilMoisture = constrain(soilMoisture, 0, 100); // Ограничение на границы
+  
   if (isnan(humidity) || isnan(temperature)) {
     Serial.println("Ошибка чтения DHT11");
   }
@@ -104,3 +109,6 @@ void setup() {
 void loop() {
   server.handleClient();
 }
+
+
+
